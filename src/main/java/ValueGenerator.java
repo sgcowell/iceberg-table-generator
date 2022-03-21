@@ -15,12 +15,12 @@ public class ValueGenerator {
   public ValueGenerator(int seed) {
     this.seed = seed;
     this.random = new Random(seed);
-    this.idIterator = Stream.iterate(1, i -> i + 1).iterator();
+    this.idIterator = Stream.iterate(0, i -> i + 1).iterator();
   }
 
   public void reset() {
     random.setSeed(seed);
-    idIterator = Stream.iterate(1, i -> i + 1).iterator();
+    idIterator = Stream.iterate(0, i -> i + 1).iterator();
   }
 
   public int id() {

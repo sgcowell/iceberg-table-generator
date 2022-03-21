@@ -64,14 +64,20 @@ public class IcebergTableGenerator {
   }
 
   public IcebergTableGenerator create(Schema schema, PartitionSpec partitionSpec) {
+    return create(schema, partitionSpec, ImmutableMap.of());
+  }
+
+  public IcebergTableGenerator create(
+      Schema schema, PartitionSpec partitionSpec, Map<String, String> tableProperties) {
     if (catalog.tableExists(id)) {
       System.out.format("Table '%s' exists, dropping\n", id.toString());
       catalog.dropTable(id, true);
     }
 
-    table =
-        catalog.createTable(
-            id, schema, partitionSpec, ImmutableMap.of(TableProperties.FORMAT_VERSION, "2"));
+    Map<String, String> updatedProperties = new HashMap<>(tableProperties);
+    updatedProperties.computeIfAbsent(TableProperties.FORMAT_VERSION, k -> "2");
+
+    table = catalog.createTable(id, schema, partitionSpec, updatedProperties);
 
     return this;
   }
@@ -125,6 +131,7 @@ public class IcebergTableGenerator {
               .rowSchema(table.schema())
               .withSpec(table.spec())
               .withPartition(key)
+              .setAll(table.properties())
               .buildPositionWriter();
       try (PositionDeleteWriter<Record> writer = deleteWriter) {
         for (FileScanTask task : orderedTasks.get(key)) {
@@ -191,6 +198,7 @@ public class IcebergTableGenerator {
         Parquet.write(Files.localOutput(parquetFile))
             .schema(table.schema())
             .createWriterFunc(GenericParquetWriter::buildWriter)
+            .setAll(table.properties())
             .build()) {
       Stream<GenericRecord> stream =
           Stream.iterate(0, i -> i + 1)
