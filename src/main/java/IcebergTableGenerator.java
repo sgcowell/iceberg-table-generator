@@ -69,8 +69,8 @@ public class IcebergTableGenerator {
 
   public IcebergTableGenerator create(
       Schema schema, PartitionSpec partitionSpec, Map<String, String> tableProperties) {
+    System.out.format("Creating '%s'...\n", id.toString());
     if (catalog.tableExists(id)) {
-      System.out.format("Table '%s' exists, dropping\n", id.toString());
       catalog.dropTable(id, true);
     }
 
