@@ -73,4 +73,20 @@ public class ValueGenerator {
     Preconditions.checkArgument(max > min, "max must be > min");
     return min + (random.nextDouble() * (max - min));
   }
+
+  public char charRange(char min, char max) {
+    Preconditions.checkArgument(max > min, "max must be > min");
+    return (char) (min + random.nextInt(max - min));
+  }
+
+  public String stringRange(String min, String max, int len) {
+    StringBuilder builder = new StringBuilder(len);
+    for (int i = 0; i < len; i++) {
+      char cmin = i < min.length() ? min.charAt(i) : 'a';
+      char cmax = i < max.length() ? max.charAt(i) : 'z';
+      builder.append(charRange(cmin, cmax));
+    }
+
+    return builder.toString();
+  }
 }

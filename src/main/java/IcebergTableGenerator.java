@@ -1,16 +1,19 @@
 import static org.apache.iceberg.Files.localInput;
+import static org.apache.iceberg.expressions.Expressions.bucket;
 
 import com.google.common.base.Preconditions;
-import java.io.File;
 import java.io.IOException;
-import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 import java.util.function.Predicate;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.iceberg.AppendFiles;
@@ -28,6 +31,7 @@ import org.apache.iceberg.Schema;
 import org.apache.iceberg.Table;
 import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.Transaction;
+import org.apache.iceberg.UpdatePartitionSpec;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.data.GenericRecord;
 import org.apache.iceberg.data.Record;
@@ -36,17 +40,19 @@ import org.apache.iceberg.data.parquet.GenericParquetWriter;
 import org.apache.iceberg.deletes.PositionDeleteWriter;
 import org.apache.iceberg.expressions.Expression;
 import org.apache.iceberg.expressions.Expressions;
+import org.apache.iceberg.expressions.Term;
 import org.apache.iceberg.hadoop.HadoopCatalog;
 import org.apache.iceberg.io.CloseableIterable;
 import org.apache.iceberg.io.FileAppender;
 import org.apache.iceberg.io.OutputFile;
 import org.apache.iceberg.parquet.Parquet;
 import org.apache.iceberg.relocated.com.google.common.collect.ImmutableMap;
+import org.apache.parquet.column.ParquetProperties;
 
 public class IcebergTableGenerator {
 
   private final HadoopCatalog catalog;
-  private final Path warehousePath;
+  private final String warehousePath;
   private final ValueGenerator generator;
   private final TableIdentifier id;
   private Table table;
@@ -54,11 +60,13 @@ public class IcebergTableGenerator {
 
   public IcebergTableGenerator(String warehousePath, TableIdentifier id) {
     Configuration conf = new Configuration();
+    conf.set("fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem");
+    conf.set("fs.s3a.connection.ssl.enabled", "false");
     this.catalog = new HadoopCatalog();
     this.catalog.setConf(conf);
     this.catalog.initialize(
         "hadoop", ImmutableMap.of(CatalogProperties.WAREHOUSE_LOCATION, warehousePath));
-    this.warehousePath = Paths.get(warehousePath);
+    this.warehousePath = warehousePath;
     this.generator = new ValueGenerator(42);
     this.id = id;
   }
@@ -82,6 +90,15 @@ public class IcebergTableGenerator {
     return this;
   }
 
+  public IcebergTableGenerator updateSpec(List<Term> additions, List<Term> removals) {
+    UpdatePartitionSpec update = getTransaction().updateSpec();
+    additions.forEach(update::addField);
+    removals.forEach(update::removeField);
+    update.commit();
+
+    return this;
+  }
+
   public <T> IcebergTableGenerator append(
       List<T> partitionValues,
       RecordGenerator<T> recordGenerator,
@@ -89,14 +106,13 @@ public class IcebergTableGenerator {
       int rowsPerDataFile)
       throws IOException {
     Preconditions.checkState(table != null, "create must be called first");
-    Path dataDir = getDataDirectory(id);
+    URI dataDir = getDataDirectory(id);
     AppendFiles appendFiles = getTransaction().newAppend();
 
     for (T value : partitionValues) {
-      Path partitionDir = dataDir.resolve(value.toString());
+      URI partitionDir = dataDir.resolve(value.toString() + "/");
       for (int fileNum = 0; fileNum < dataFilesPerPartition; fileNum++) {
-        String fileName = value + "-" + String.format("%02d", fileNum) + ".parquet";
-        File parquetFile = partitionDir.resolve(fileName).toFile();
+        OutputFile parquetFile = getUniqueNumberedFilename(partitionDir.resolve(value + "-%02d.parquet").toString());
         appendFiles.appendFile(writeDataFile(parquetFile, value, recordGenerator, rowsPerDataFile));
       }
     }
@@ -106,11 +122,40 @@ public class IcebergTableGenerator {
     return this;
   }
 
+  public IcebergTableGenerator append(
+      RecordGenerator<Void> recordGenerator,
+      int numDataFiles,
+      int rowsPerDataFile) throws IOException {
+    Preconditions.checkState(table != null, "create must be called first");
+    URI dataDir = getDataDirectory(id);
+    AppendFiles appendFiles = getTransaction().newAppend();
+
+    for (int fileNum = 0; fileNum < numDataFiles; fileNum++) {
+      OutputFile parquetFile = getUniqueNumberedFilename(dataDir.resolve("%02d.parquet").toString());
+      appendFiles.appendFile(writeUnpartitionedDataFile(parquetFile, recordGenerator, rowsPerDataFile));
+    }
+
+    appendFiles.commit();
+
+    return this;
+  }
+
+  public IcebergTableGenerator mergeOnReadDelete(Predicate<Record> deletePredicate) throws IOException {
+    return mergeOnReadDelete(null, deletePredicate, 0, 0, null);
+  }
+
   public <T> IcebergTableGenerator mergeOnReadDelete(
       List<T> partitionValues, Predicate<Record> deletePredicate) throws IOException {
-    Path dataDir = getDataDirectory(id);
-    PartitionField field = table.spec().fields().get(0);
-    Expression expr = Expressions.in(field.name(), partitionValues.toArray());
+    return mergeOnReadDelete(partitionValues, deletePredicate, 0, 0, null);
+  }
+
+  public <T> IcebergTableGenerator mergeOnReadDelete(
+      List<T> partitionValues, Predicate<Record> deletePredicate, int extraDataFileCountPerPartition,
+      int extraDeleteCountPerDataFile, GenericRecord fakeRecord) throws IOException {
+    URI dataDir = getDataDirectory(id);
+    Expression expr = partitionValues != null ?
+        Expressions.in(table.spec().fields().get(0).name(), partitionValues.toArray()) :
+        Expressions.alwaysTrue();
     CloseableIterable<FileScanTask> scanTasks = table.newScan().filter(expr).planFiles();
 
     RowDelta rowDelta = getTransaction().newRowDelta();
@@ -118,14 +163,31 @@ public class IcebergTableGenerator {
     Map<PartitionKey, List<FileScanTask>> orderedTasks =
         orderFileScanTasksByPartitionAndPath(scanTasks);
     for (PartitionKey key : orderedTasks.keySet()) {
-      String partitionString = partitionKeyDirectoryName(key);
-      Path partitionDir = dataDir.resolve(partitionString);
-      File deleteFile =
-          getUniqueNumberedFilename(partitionDir + "/delete-" + partitionString + "-%02d.parquet");
+      OutputFile deleteFile;
+      String fakePathPrefix;
+      if (key.size() > 0) {
+        String partitionString = partitionKeyDirectoryName(key);
+        URI partitionDir = partitionString.length() > 0 ? dataDir.resolve(partitionString + "/") : dataDir;
+        deleteFile = getUniqueNumberedFilename(partitionDir + "/delete-" + partitionString + "-%02d.parquet");
+        fakePathPrefix = partitionDir + partitionString + "-";
+      } else {
+        deleteFile = getUniqueNumberedFilename(dataDir + "/delete-%02d.parquet");
+        fakePathPrefix = dataDir.toString();
+      }
 
-      OutputFile out = Files.localOutput(deleteFile);
+      Set<String> realDataFiles = orderedTasks.get(key).stream()
+          .map(t -> t.file().path().toString())
+          .collect(Collectors.toSet());
+      List<String> dataFiles = new ArrayList<>(realDataFiles);
+      for (int i = 0; i < extraDataFileCountPerPartition; i++) {
+        String fakePath = fakePathPrefix + String.format("%010d-%s-fake.parquet", i,
+            UUID.randomUUID());
+        dataFiles.add(fakePath);
+      }
+      dataFiles.sort(String::compareTo);
+
       PositionDeleteWriter<Record> deleteWriter =
-          Parquet.writeDeletes(out)
+          Parquet.writeDeletes(deleteFile)
               .createWriterFunc(GenericParquetWriter::buildWriter)
               .overwrite()
               .rowSchema(table.schema())
@@ -134,22 +196,27 @@ public class IcebergTableGenerator {
               .setAll(table.properties())
               .buildPositionWriter();
       try (PositionDeleteWriter<Record> writer = deleteWriter) {
-        for (FileScanTask task : orderedTasks.get(key)) {
-          String filePath = task.file().path().toString();
-          try (CloseableIterable<Record> reader =
-              Parquet.read(Files.localInput(filePath))
-                  .project(table.schema())
-                  .reuseContainers()
-                  .createReaderFunc(
-                      fileSchema -> GenericParquetReaders.buildReader(table.schema(), fileSchema))
-                  .build()) {
+        for (String path : dataFiles) {
+          if (realDataFiles.contains(path)) {
+            try (CloseableIterable<Record> reader =
+                     Parquet.read(table.io().newInputFile(path))
+                         .project(table.schema())
+                         .reuseContainers()
+                         .createReaderFunc(
+                             fileSchema -> GenericParquetReaders.buildReader(table.schema(), fileSchema))
+                         .build()) {
 
-            int pos = 0;
-            for (Record record : reader) {
-              if (deletePredicate.test(record)) {
-                writer.delete(filePath, pos, record);
+              int pos = 0;
+              for (Record record : reader) {
+                if (deletePredicate.test(record)) {
+                  writer.delete(path, pos, record);
+                }
+                pos++;
               }
-              pos++;
+            }
+          } else {
+            for (int i = 0, pos = 0; i < extraDeleteCountPerDataFile; i++, pos += generator.intRange(1, 100)) {
+              writer.delete(path, pos, fakeRecord);
             }
           }
         }
@@ -162,23 +229,26 @@ public class IcebergTableGenerator {
     return this;
   }
 
+
+
   public IcebergTableGenerator commit() {
     transaction.commitTransaction();
     transaction = null;
     return this;
   }
 
-  private Path getDataDirectory(TableIdentifier id) {
-    return warehousePath.resolve(Paths.get(id.toString().replace(".", "/"), "data"));
+  private URI getDataDirectory(TableIdentifier id) {
+    URI uri = URI.create(warehousePath + "/");
+    return uri.resolve(id.toString().replace(".", "/") + "/data/");
   }
 
-  private File getUniqueNumberedFilename(String template) {
+  private OutputFile getUniqueNumberedFilename(String template) {
     int fileNum = 0;
-    File name;
+    OutputFile name;
     do {
-      name = new File(String.format(template, fileNum));
+      name = table.io().newOutputFile(String.format(template, fileNum));
       fileNum++;
-    } while (name.exists());
+    } while (name.toInputFile().exists());
 
     return name;
   }
@@ -192,10 +262,11 @@ public class IcebergTableGenerator {
   }
 
   private <T> DataFile writeDataFile(
-      File parquetFile, T partitionValue, RecordGenerator<T> recordGenerator, int nrows)
+      OutputFile parquetFile, T partitionValue, RecordGenerator<T> recordGenerator, int nrows)
       throws IOException {
     try (FileAppender<GenericRecord> appender =
-        Parquet.write(Files.localOutput(parquetFile))
+        Parquet.write(parquetFile)
+            .writerVersion(ParquetProperties.WriterVersion.PARQUET_1_0)
             .schema(table.schema())
             .createWriterFunc(GenericParquetWriter::buildWriter)
             .setAll(table.properties())
@@ -212,7 +283,32 @@ public class IcebergTableGenerator {
 
       return DataFiles.builder(table.spec())
           .withPartition(partitionKey)
-          .withInputFile(localInput(parquetFile))
+          .withInputFile(parquetFile.toInputFile())
+          .withMetrics(appender.metrics())
+          .withFormat(FileFormat.PARQUET)
+          .build();
+    }
+  }
+
+  private DataFile writeUnpartitionedDataFile(
+      OutputFile parquetFile, RecordGenerator<Void> recordGenerator, int nrows)
+      throws IOException {
+    try (FileAppender<GenericRecord> appender =
+        Parquet.write(parquetFile)
+            .writerVersion(ParquetProperties.WriterVersion.PARQUET_1_0)
+            .schema(table.schema())
+            .createWriterFunc(GenericParquetWriter::buildWriter)
+            .setAll(table.properties())
+            .build()) {
+      Stream<GenericRecord> stream =
+          Stream.iterate(0, i -> i + 1)
+              .limit(nrows)
+              .map(i -> recordGenerator.next(generator, null));
+      appender.addAll(stream.iterator());
+      appender.close();
+
+      return DataFiles.builder(table.spec())
+          .withInputFile(parquetFile.toInputFile())
           .withMetrics(appender.metrics())
           .withFormat(FileFormat.PARQUET)
           .build();
