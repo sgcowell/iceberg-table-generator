@@ -1,3 +1,4 @@
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.Month;
 import java.util.Iterator;
@@ -62,6 +63,10 @@ public class ValueGenerator {
         random.nextInt(23),
         random.nextInt(60),
         random.nextInt(60));
+  }
+
+  public LocalDate date(int year) {
+    return timestamp(year).toLocalDate();
   }
 
   public int intRange(int min, int max) {
