@@ -28,6 +28,7 @@ import org.apache.iceberg.Table;
 import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.Transaction;
 import org.apache.iceberg.UpdatePartitionSpec;
+import org.apache.iceberg.UpdateSchema;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.data.GenericRecord;
 import org.apache.iceberg.data.Record;
@@ -85,6 +86,10 @@ public class IcebergTableGenerator {
     table = catalog.createTable(id, schema, partitionSpec, updatedProperties);
 
     return this;
+  }
+
+  public Table getTable() {
+    return table;
   }
 
   public IcebergTableGenerator updateSpec(List<Term> additions, List<Term> removals) {
@@ -293,6 +298,13 @@ public class IcebergTableGenerator {
     return this;
   }
 
+  public Transaction getTransaction() {
+    if (transaction == null) {
+      transaction = table.newTransaction();
+    }
+
+    return transaction;
+  }
 
   public IcebergTableGenerator commit() {
     transaction.commitTransaction();
@@ -314,14 +326,6 @@ public class IcebergTableGenerator {
     } while (name.toInputFile().exists());
 
     return name;
-  }
-
-  private Transaction getTransaction() {
-    if (transaction == null) {
-      transaction = table.newTransaction();
-    }
-
-    return transaction;
   }
 
   private <T> DataFile writeDataFile(

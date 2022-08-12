@@ -15,6 +15,7 @@ import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.TableProperties;
+import org.apache.iceberg.UpdateSchema;
 import org.apache.iceberg.catalog.TableIdentifier;
 import org.apache.iceberg.data.GenericRecord;
 import org.apache.iceberg.expressions.Expressions;
@@ -100,6 +101,7 @@ public class Main {
     createUnpartitionedOrdersWithDeletes();
     createProductsWithEqDeletes();
 
+//    createProductsWithEqDeletesSchemaChange();
 //    createSmallOrdersWithLargeDeleteFile();
 //    createSmallOrdersWithPartitionEvolution();
   }
@@ -262,6 +264,47 @@ public class Main {
             r -> r.get(0, Integer.class) >= 50 && r.get(0, Integer.class) < 53)
         .commit();
   }
+
+  private void createProductsWithEqDeletesSchemaChange() throws IOException {
+    Schema initialSchema = PRODUCTS_SCHEMA.select("product_id", "name", "category");
+    IcebergTableGenerator tableGenerator =
+        new IcebergTableGenerator(warehousePath, TableIdentifier.of("products_with_schema_change"));
+    tableGenerator
+        .create(
+            initialSchema,
+            PartitionSpec.builderFor(initialSchema).identity("category").build(),
+            ImmutableMap.of(
+                // Iceberg will write at minimum 100 rows per rowgroup, so set row group size small enough to
+                // guarantee that happens
+                TableProperties.PARQUET_ROW_GROUP_SIZE_BYTES, Integer.toString(1)))
+        // add 200 rows to widget partition
+        .append(ImmutableList.of("widget"), createProductsRecordGenerator(tableGenerator), 1, 200)
+        .commit()
+        // delete product_ids [ 0 .. 29 ] via equality delete - 30 rows removed
+        .equalityDelete(ImmutableList.of("widget"), r -> r.get(0, Integer.class) < 30,
+            equalityIds(PRODUCTS_SCHEMA, "product_id"))
+        .commit();
+
+    // add color column, remove product_id column
+    UpdateSchema updateSchema = tableGenerator.getTransaction().updateSchema();
+    updateSchema.addColumn("color", Types.StringType.get());
+    updateSchema.deleteColumn("product_id");
+    updateSchema.commit();
+
+    tableGenerator
+        // add 200 rows to gizmo partition
+        .append(ImmutableList.of("gizmo"), createProductsRecordGenerator(tableGenerator), 1, 200)
+        .commit();
+
+    /*
+        // delete all products with color 'green' via equality delete
+        .equalityDelete(ImmutableList.of("widget", "gizmo"), r -> r.get(3, String.class).equals("green"),
+            equalityIds(PRODUCTS_SCHEMA, "color"))
+        .commit();
+
+     */
+  }
+
   
   private GenericRecord generateOrdersRecord(ValueGenerator generator, Integer partitionValue) {
     GenericRecord record = GenericRecord.create(ORDERS_SCHEMA);
@@ -327,6 +370,49 @@ public class Main {
     record.set(5, generator.doubleRange(0.1, 50.0));
     record.set(6, generator.intRange(0, 10000));
     return record;
+  }
+
+  private RecordGenerator<String> createProductsRecordGenerator(IcebergTableGenerator tableGenerator) {
+    return (generator, category) -> {
+      GenericRecord record = GenericRecord.create(tableGenerator.getTable().schema());
+      int id = generator.id();
+      String name = String.format(generator.select(PRODUCT_NAME_TEMPLATES), StringUtils.capitalize(category));
+      String suffix = generator.select(PRODUCT_SUFFIXES);
+      if (!suffix.isEmpty()) {
+        name = name + " " + suffix;
+      }
+
+      for (int i = 0; i < record.size(); i++) {
+        Object value = null;
+        switch (record.struct().fields().get(i).name()) {
+          case "product_id":
+            value = id;
+            break;
+          case "name":
+            value = name;
+            break;
+          case "category":
+            value = category;
+            break;
+          case "color":
+            value = COLORS.get(id % COLORS.size());
+            break;
+          case "created_date":
+            value = LocalDate.of(2022 - (id / 12), 12 - (id % 12), 1);
+            break;
+          case "weight":
+            value = generator.doubleRange(0.1, 50.0);
+            break;
+          case "quantity":
+            value = generator.intRange(0, 10000);
+            break;
+        }
+
+        record.set(i, value);
+      }
+
+      return record;
+    };
   }
 
   private List<Integer> equalityIds(Schema schema, String... fields) {
