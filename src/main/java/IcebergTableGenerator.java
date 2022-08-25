@@ -56,10 +56,7 @@ public class IcebergTableGenerator {
   private Table table;
   private Transaction transaction;
 
-  public IcebergTableGenerator(String warehousePath, TableIdentifier id) {
-    Configuration conf = new Configuration();
-    conf.set("fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem");
-    conf.set("fs.s3a.connection.ssl.enabled", "false");
+  public IcebergTableGenerator(String warehousePath, Configuration conf, TableIdentifier id) {
     this.catalog = new HadoopCatalog();
     this.catalog.setConf(conf);
     this.catalog.initialize(

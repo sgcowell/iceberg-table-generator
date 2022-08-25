@@ -24,6 +24,7 @@ dependencies {
     implementation 'org.apache.hadoop:hadoop-aws:3.3.1'
     implementation 'org.apache.hadoop:hadoop-mapreduce-client-core:3.3.1'
     implementation 'org.apache.commons:commons-lang3:3.12.0'
+    implementation 'com.google.cloud.bigdataoss:gcs-connector:hadoop3-2.2.7'
     implementation 'com.beust:jcommander:1.82'
     testImplementation 'org.junit.jupiter:junit-jupiter-api:5.7.2'
     testRuntimeOnly 'org.junit.jupiter:junit-jupiter-engine:5.7.2'

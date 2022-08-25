@@ -12,6 +12,7 @@ import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.apache.hadoop.conf.Configuration;
 import org.apache.iceberg.PartitionSpec;
 import org.apache.iceberg.Schema;
 import org.apache.iceberg.TableProperties;
@@ -27,6 +28,13 @@ public class Main {
       names = {"--warehouse"},
       description = "Warehouse path")
   private String warehousePath = Paths.get(System.getenv("HOME"), "warehouse").toString();
+
+  @Parameter(
+      names = {"--conf"},
+      description = "Additional hadoop configuration key/value pairs")
+  private List<String> hadoopConf = ImmutableList.of();
+
+  private Configuration conf;
 
   private static final Schema ORDERS_SCHEMA =
       new Schema(
@@ -88,9 +96,28 @@ public class Main {
       Main main = new Main();
       JCommander.newBuilder().addObject(main).build().parse(args);
 
+      main.initHadoopConfFromArgs();
       main.run();
     } catch (Exception ex) {
       ExceptionUtils.printRootCauseStackTrace(ex, System.err);
+    }
+  }
+
+  private void initHadoopConfFromArgs() {
+    conf = new Configuration();
+    conf.set("fs.s3.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem");
+    conf.set("fs.s3a.connection.ssl.enabled", "false");
+    conf.set("fs.AbstractFileSystem.gs.impl", "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS");
+    conf.set("google.cloud.auth.type", "SERVICE_ACCOUNT_JSON_KEYFILE");
+
+    for (String arg : hadoopConf) {
+      String[] kv = arg.split("=");
+      if (kv.length != 2) {
+        System.err.format("Invalid --conf option: %s", arg);
+        System.exit(1);
+      }
+
+      conf.set(kv[0], kv[1]);
     }
   }
 
@@ -108,7 +135,7 @@ public class Main {
 
   private void createSmallOrders() throws IOException {
     IcebergTableGenerator tableGenerator =
-        new IcebergTableGenerator(warehousePath, TableIdentifier.of("orders"));
+        new IcebergTableGenerator(warehousePath, conf, TableIdentifier.of("orders"));
     tableGenerator
         .create(
             ORDERS_SCHEMA, PartitionSpec.builderFor(ORDERS_SCHEMA).identity("order_year").build())
@@ -120,7 +147,7 @@ public class Main {
 
   private void createSmallOrdersWithDeletes() throws IOException {
     IcebergTableGenerator tableGenerator =
-        new IcebergTableGenerator(warehousePath, TableIdentifier.of("orders_with_deletes"));
+        new IcebergTableGenerator(warehousePath, conf, TableIdentifier.of("orders_with_deletes"));
     tableGenerator
         .create(
             ORDERS_SCHEMA, PartitionSpec.builderFor(ORDERS_SCHEMA).identity("order_year").build())
@@ -138,7 +165,7 @@ public class Main {
 
   private void createMultiRowGroupOrdersWithDeletes() throws IOException {
     IcebergTableGenerator tableGenerator =
-        new IcebergTableGenerator(warehousePath, TableIdentifier.of("multi_rowgroup_orders_with_deletes"));
+        new IcebergTableGenerator(warehousePath, conf, TableIdentifier.of("multi_rowgroup_orders_with_deletes"));
     tableGenerator
         .create(
             ORDERS_SCHEMA,
@@ -162,7 +189,7 @@ public class Main {
 
   private void createSmallOrdersWithLargeDeleteFile() throws IOException {
     IcebergTableGenerator tableGenerator =
-        new IcebergTableGenerator(warehousePath, TableIdentifier.of("orders_with_large_delete_file"));
+        new IcebergTableGenerator(warehousePath, conf, TableIdentifier.of("orders_with_large_delete_file"));
     tableGenerator
         .create(
             ORDERS_SCHEMA, PartitionSpec.builderFor(ORDERS_SCHEMA).identity("order_year").build())
@@ -174,7 +201,7 @@ public class Main {
 
   private void createSmallOrdersWithPartitionEvolution() throws IOException {
     IcebergTableGenerator tableGenerator =
-        new IcebergTableGenerator(warehousePath, TableIdentifier.of("orders_part_evol"));
+        new IcebergTableGenerator(warehousePath, conf, TableIdentifier.of("orders_part_evol"));
     tableGenerator
         .create(
             ORDERS_SCHEMA, PartitionSpec.builderFor(ORDERS_SCHEMA).identity("order_year").build())
@@ -190,7 +217,7 @@ public class Main {
 
   private void createUnpartitionedOrdersWithDeletes() throws IOException {
     IcebergTableGenerator tableGenerator =
-        new IcebergTableGenerator(warehousePath, TableIdentifier.of("unpartitioned_orders_with_deletes"));
+        new IcebergTableGenerator(warehousePath, conf, TableIdentifier.of("unpartitioned_orders_with_deletes"));
     tableGenerator
         .create(ORDERS_SCHEMA, PartitionSpec.unpartitioned())
         .append(this::generateUnpartitionedOrdersRecord, 2, 100)
@@ -228,7 +255,7 @@ public class Main {
    */
   private void createProductsWithEqDeletes() throws IOException {
     IcebergTableGenerator tableGenerator =
-        new IcebergTableGenerator(warehousePath, TableIdentifier.of("products_with_eq_deletes"));
+        new IcebergTableGenerator(warehousePath, conf, TableIdentifier.of("products_with_eq_deletes"));
     tableGenerator
         .create(
             PRODUCTS_SCHEMA,
@@ -268,7 +295,7 @@ public class Main {
   private void createProductsWithEqDeletesSchemaChange() throws IOException {
     Schema initialSchema = PRODUCTS_SCHEMA.select("product_id", "name", "category");
     IcebergTableGenerator tableGenerator =
-        new IcebergTableGenerator(warehousePath, TableIdentifier.of("products_with_schema_change"));
+        new IcebergTableGenerator(warehousePath, conf, TableIdentifier.of("products_with_schema_change"));
     tableGenerator
         .create(
             initialSchema,
@@ -418,4 +445,6 @@ public class Main {
   private List<Integer> equalityIds(Schema schema, String... fields) {
     return Arrays.stream(fields).map(f -> schema.findField(f).fieldId()).collect(Collectors.toList());
   }
+
+
 }
