@@ -9,7 +9,6 @@ import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
-
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.hadoop.conf.Configuration;
@@ -57,39 +56,18 @@ public class Main {
           Types.NestedField.required(6, "weight", Types.DoubleType.get()),
           Types.NestedField.required(7, "quantity", Types.IntegerType.get()));
 
-  private static final List<String> PRODUCT_NAME_TEMPLATES = ImmutableList.of(
-      "Core%s",
-      "%sPress",
-      "%sLab",
-      "Ever%s",
-      "%sScope",
-      "%sKit",
-      "%sTron",
-      "%sView",
-      "%sBuddy",
-      "Home%s");
+  private static final List<String> PRODUCT_NAME_TEMPLATES =
+      ImmutableList.of(
+          "Core%s",
+          "%sPress", "%sLab", "Ever%s", "%sScope", "%sKit", "%sTron", "%sView", "%sBuddy",
+          "Home%s");
 
-  private static final List<String> PRODUCT_SUFFIXES = ImmutableList.of(
-      "",
-      "",
-      "Advanced",
-      "1000",
-      "2000",
-      "Deluxe",
-      "Express",
-      "Ultimate");
+  private static final List<String> PRODUCT_SUFFIXES =
+      ImmutableList.of("", "", "Advanced", "1000", "2000", "Deluxe", "Express", "Ultimate");
 
-  private static final List<String> COLORS = ImmutableList.of(
-      "black",
-      "white",
-      "red",
-      "orange",
-      "yellow",
-      "green",
-      "blue",
-      "purple",
-      "brown",
-      "gray");
+  private static final List<String> COLORS =
+      ImmutableList.of(
+          "black", "white", "red", "orange", "yellow", "green", "blue", "purple", "brown", "gray");
 
   public static void main(String[] args) {
     try {
@@ -128,9 +106,9 @@ public class Main {
     createUnpartitionedOrdersWithDeletes();
     createProductsWithEqDeletes();
 
-//    createProductsWithEqDeletesSchemaChange();
-//    createSmallOrdersWithLargeDeleteFile();
-//    createSmallOrdersWithPartitionEvolution();
+    //    createProductsWithEqDeletesSchemaChange();
+    //    createSmallOrdersWithLargeDeleteFile();
+    //    createSmallOrdersWithPartitionEvolution();
   }
 
   private void createSmallOrders() throws IOException {
@@ -165,7 +143,8 @@ public class Main {
 
   private void createMultiRowGroupOrdersWithDeletes() throws IOException {
     IcebergTableGenerator tableGenerator =
-        new IcebergTableGenerator(warehousePath, conf, TableIdentifier.of("multi_rowgroup_orders_with_deletes"));
+        new IcebergTableGenerator(
+            warehousePath, conf, TableIdentifier.of("multi_rowgroup_orders_with_deletes"));
     tableGenerator
         .create(
             ORDERS_SCHEMA,
@@ -182,21 +161,27 @@ public class Main {
             ImmutableList.of(2021),
             r -> r.get(0, Integer.class) % 10 > 0 && r.get(0, Integer.class) % 100 == 5)
         .commit()
-        .positionalDelete(ImmutableList.of(2020, 2021),
+        .positionalDelete(
+            ImmutableList.of(2020, 2021),
             r -> r.get(0, Integer.class) % 3000 >= 700 && r.get(0, Integer.class) % 3000 < 1200)
         .commit();
   }
 
   private void createSmallOrdersWithLargeDeleteFile() throws IOException {
     IcebergTableGenerator tableGenerator =
-        new IcebergTableGenerator(warehousePath, conf, TableIdentifier.of("orders_with_large_delete_file"));
+        new IcebergTableGenerator(
+            warehousePath, conf, TableIdentifier.of("orders_with_large_delete_file"));
     tableGenerator
         .create(
             ORDERS_SCHEMA, PartitionSpec.builderFor(ORDERS_SCHEMA).identity("order_year").build())
         .append(ImmutableList.of(2021), this::generateOrdersRecord, 2, 100)
         .commit()
-        .positionalDelete(ImmutableList.of(2021), r -> r.get(0, Integer.class) % 10 < 3,
-            10000, 10000, getFakeOrdersRecordForExtraDeletes());
+        .positionalDelete(
+            ImmutableList.of(2021),
+            r -> r.get(0, Integer.class) % 10 < 3,
+            10000,
+            10000,
+            getFakeOrdersRecordForExtraDeletes());
   }
 
   private void createSmallOrdersWithPartitionEvolution() throws IOException {
@@ -209,15 +194,19 @@ public class Main {
         .commit()
         .append(ImmutableList.of(2021), this::generateOrdersRecord, 2, 100)
         .commit()
-        .updateSpec(ImmutableList.of(Expressions.ref("source_id")), ImmutableList.of(Expressions.ref("order_year")))
+        .updateSpec(
+            ImmutableList.of(Expressions.ref("source_id")),
+            ImmutableList.of(Expressions.ref("order_year")))
         .commit()
-        .append(ImmutableList.of(0, 1, 2, 3, 4), this::generateOrdersRecordWithSourceIdPartition, 1, 40)
+        .append(
+            ImmutableList.of(0, 1, 2, 3, 4), this::generateOrdersRecordWithSourceIdPartition, 1, 40)
         .commit();
   }
 
   private void createUnpartitionedOrdersWithDeletes() throws IOException {
     IcebergTableGenerator tableGenerator =
-        new IcebergTableGenerator(warehousePath, conf, TableIdentifier.of("unpartitioned_orders_with_deletes"));
+        new IcebergTableGenerator(
+            warehousePath, conf, TableIdentifier.of("unpartitioned_orders_with_deletes"));
     tableGenerator
         .create(ORDERS_SCHEMA, PartitionSpec.unpartitioned())
         .append(this::generateUnpartitionedOrdersRecord, 2, 100)
@@ -231,12 +220,16 @@ public class Main {
   }
 
   /**
-   * Creates a 'products_with_eq_deletes' table with 3 partitions on the category column: widget, gadget, gizmo.
-   * 5 data files with 200 rows each are created - 2 in widget, 2 in gizmo, 1 in gadget.  Each data file has two
-   * row groups, each with 100 rows.
-   * <p><p>
-   * Creation steps:
+   * Creates a 'products_with_eq_deletes' table with 3 partitions on the category column: widget,
+   * gadget, gizmo. 5 data files with 200 rows each are created - 2 in widget, 2 in gizmo, 1 in
+   * gadget. Each data file has two row groups, each with 100 rows.
+   *
    * <p>
+   *
+   * <p>Creation steps:
+   *
+   * <p>
+   *
    * <pre>
    * 1. Insert 200 rows with category 'widget', product_ids from [ 0 .. 199 ].            Total rows: 200
    * 2. Delete product_ids [ 0 .. 29 ] via equality delete on product_id.                 Total rows: 170
@@ -255,39 +248,49 @@ public class Main {
    */
   private void createProductsWithEqDeletes() throws IOException {
     IcebergTableGenerator tableGenerator =
-        new IcebergTableGenerator(warehousePath, conf, TableIdentifier.of("products_with_eq_deletes"));
+        new IcebergTableGenerator(
+            warehousePath, conf, TableIdentifier.of("products_with_eq_deletes"));
     tableGenerator
         .create(
             PRODUCTS_SCHEMA,
             PartitionSpec.builderFor(PRODUCTS_SCHEMA).identity("category").build(),
             ImmutableMap.of(
-                // Iceberg will write at minimum 100 rows per rowgroup, so set row group size small enough to
+                // Iceberg will write at minimum 100 rows per rowgroup, so set row group size small
+                // enough to
                 // guarantee that happens
                 TableProperties.PARQUET_ROW_GROUP_SIZE_BYTES, Integer.toString(1)))
         // add 200 rows to widget partition
         .append(ImmutableList.of("widget"), this::generateProductsRecord, 1, 200)
         .commit()
         // delete product_ids [ 0 .. 29 ] via equality delete - 30 rows removed
-        .equalityDelete(ImmutableList.of("widget"), r -> r.get(0, Integer.class) < 30,
+        .equalityDelete(
+            ImmutableList.of("widget"),
+            r -> r.get(0, Integer.class) < 30,
             equalityIds(PRODUCTS_SCHEMA, "product_id"))
         .commit()
         // add 200 rows to gizmo partition
         .append(ImmutableList.of("gizmo"), this::generateProductsRecord, 1, 200)
         .commit()
         // delete all products with color 'green' via equality delete - 37 rows removed
-        .equalityDelete(ImmutableList.of("widget", "gizmo"), r -> r.get(3, String.class).equals("green"),
+        .equalityDelete(
+            ImmutableList.of("widget", "gizmo"),
+            r -> r.get(3, String.class).equals("green"),
             equalityIds(PRODUCTS_SCHEMA, "color"))
         .commit()
         // add 200 rows each to widget, gadget, and gizmo partitions
         .append(ImmutableList.of("widget", "gadget", "gizmo"), this::generateProductsRecord, 1, 200)
         .commit()
-        // delete product ids [ 100 .. 199 ], [ 300 .. 399 ], [ 500 .. 599 ], [ 700 .. 799 ], [ 900 .. 999 ]
+        // delete product ids [ 100 .. 199 ], [ 300 .. 399 ], [ 500 .. 599 ], [ 700 .. 799 ], [ 900
+        // .. 999 ]
         // taking into account previous deletions this deletes 480 rows
-        .equalityDelete(ImmutableList.of("widget", "gadget", "gizmo"), r -> r.get(0, Integer.class) % 200 >= 100,
+        .equalityDelete(
+            ImmutableList.of("widget", "gadget", "gizmo"),
+            r -> r.get(0, Integer.class) % 200 >= 100,
             equalityIds(PRODUCTS_SCHEMA, "product_id"))
         .commit()
         // delete product_ids [ 50 .. 52 ] via positional delete - 3 rows removed
-        .positionalDelete(ImmutableList.of("widget"),
+        .positionalDelete(
+            ImmutableList.of("widget"),
             r -> r.get(0, Integer.class) >= 50 && r.get(0, Integer.class) < 53)
         .commit();
   }
@@ -295,20 +298,24 @@ public class Main {
   private void createProductsWithEqDeletesSchemaChange() throws IOException {
     Schema initialSchema = PRODUCTS_SCHEMA.select("product_id", "name", "category");
     IcebergTableGenerator tableGenerator =
-        new IcebergTableGenerator(warehousePath, conf, TableIdentifier.of("products_with_schema_change"));
+        new IcebergTableGenerator(
+            warehousePath, conf, TableIdentifier.of("products_with_schema_change"));
     tableGenerator
         .create(
             initialSchema,
             PartitionSpec.builderFor(initialSchema).identity("category").build(),
             ImmutableMap.of(
-                // Iceberg will write at minimum 100 rows per rowgroup, so set row group size small enough to
+                // Iceberg will write at minimum 100 rows per rowgroup, so set row group size small
+                // enough to
                 // guarantee that happens
                 TableProperties.PARQUET_ROW_GROUP_SIZE_BYTES, Integer.toString(1)))
         // add 200 rows to widget partition
         .append(ImmutableList.of("widget"), createProductsRecordGenerator(tableGenerator), 1, 200)
         .commit()
         // delete product_ids [ 0 .. 29 ] via equality delete - 30 rows removed
-        .equalityDelete(ImmutableList.of("widget"), r -> r.get(0, Integer.class) < 30,
+        .equalityDelete(
+            ImmutableList.of("widget"),
+            r -> r.get(0, Integer.class) < 30,
             equalityIds(PRODUCTS_SCHEMA, "product_id"))
         .commit();
 
@@ -324,15 +331,14 @@ public class Main {
         .commit();
 
     /*
-        // delete all products with color 'green' via equality delete
-        .equalityDelete(ImmutableList.of("widget", "gizmo"), r -> r.get(3, String.class).equals("green"),
-            equalityIds(PRODUCTS_SCHEMA, "color"))
-        .commit();
+       // delete all products with color 'green' via equality delete
+       .equalityDelete(ImmutableList.of("widget", "gizmo"), r -> r.get(3, String.class).equals("green"),
+           equalityIds(PRODUCTS_SCHEMA, "color"))
+       .commit();
 
-     */
+    */
   }
 
-  
   private GenericRecord generateOrdersRecord(ValueGenerator generator, Integer partitionValue) {
     GenericRecord record = GenericRecord.create(ORDERS_SCHEMA);
     record.set(0, generator.id());
@@ -344,7 +350,8 @@ public class Main {
     return record;
   }
 
-  private GenericRecord generateOrdersRecordWithSourceIdPartition(ValueGenerator generator, Integer partitionValue) {
+  private GenericRecord generateOrdersRecordWithSourceIdPartition(
+      ValueGenerator generator, Integer partitionValue) {
     int orderYear = generator.intRange(2019, 2022);
     GenericRecord record = GenericRecord.create(ORDERS_SCHEMA);
     record.set(0, generator.id());
@@ -366,7 +373,6 @@ public class Main {
     record.set(4, generator.select(PRODUCT_NAMES) + " " + generator.intRange(0, 100));
     record.set(5, generator.doubleRange(0, 100));
     return record;
-
   }
 
   private GenericRecord getFakeOrdersRecordForExtraDeletes() {
@@ -383,7 +389,8 @@ public class Main {
   private GenericRecord generateProductsRecord(ValueGenerator generator, String category) {
     GenericRecord record = GenericRecord.create(PRODUCTS_SCHEMA);
     int id = generator.id();
-    String name = String.format(generator.select(PRODUCT_NAME_TEMPLATES), StringUtils.capitalize(category));
+    String name =
+        String.format(generator.select(PRODUCT_NAME_TEMPLATES), StringUtils.capitalize(category));
     String suffix = generator.select(PRODUCT_SUFFIXES);
     if (!suffix.isEmpty()) {
       name = name + " " + suffix;
@@ -399,11 +406,13 @@ public class Main {
     return record;
   }
 
-  private RecordGenerator<String> createProductsRecordGenerator(IcebergTableGenerator tableGenerator) {
+  private RecordGenerator<String> createProductsRecordGenerator(
+      IcebergTableGenerator tableGenerator) {
     return (generator, category) -> {
       GenericRecord record = GenericRecord.create(tableGenerator.getTable().schema());
       int id = generator.id();
-      String name = String.format(generator.select(PRODUCT_NAME_TEMPLATES), StringUtils.capitalize(category));
+      String name =
+          String.format(generator.select(PRODUCT_NAME_TEMPLATES), StringUtils.capitalize(category));
       String suffix = generator.select(PRODUCT_SUFFIXES);
       if (!suffix.isEmpty()) {
         name = name + " " + suffix;
@@ -443,8 +452,8 @@ public class Main {
   }
 
   private List<Integer> equalityIds(Schema schema, String... fields) {
-    return Arrays.stream(fields).map(f -> schema.findField(f).fieldId()).collect(Collectors.toList());
+    return Arrays.stream(fields)
+        .map(f -> schema.findField(f).fieldId())
+        .collect(Collectors.toList());
   }
-
-
 }
