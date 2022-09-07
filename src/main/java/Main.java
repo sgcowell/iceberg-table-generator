@@ -89,13 +89,16 @@ public class Main {
     conf.set("google.cloud.auth.type", "SERVICE_ACCOUNT_JSON_KEYFILE");
 
     for (String arg : hadoopConf) {
-      String[] kv = arg.split("=");
-      if (kv.length != 2) {
+      int idx = arg.indexOf('=');
+      if (idx == -1) {
         System.err.format("Invalid --conf option: %s", arg);
         System.exit(1);
       }
 
-      conf.set(kv[0], kv[1]);
+      String key = arg.substring(0, idx);
+      String value = arg.substring(idx + 1);
+
+      conf.set(key, value);
     }
   }
 
