@@ -108,6 +108,7 @@ public class Main {
     createMultiRowGroupOrdersWithDeletes();
     createUnpartitionedOrdersWithDeletes();
     createProductsWithEqDeletes();
+    createUnpartitionedProductsWithEqDeletes();
 
     //    createProductsWithEqDeletesSchemaChange();
     //    createSmallOrdersWithLargeDeleteFile();
@@ -298,6 +299,41 @@ public class Main {
         .commit();
   }
 
+  private void createUnpartitionedProductsWithEqDeletes() throws IOException {
+    IcebergTableGenerator tableGenerator =
+        new IcebergTableGenerator(
+            warehousePath, conf, TableIdentifier.of("unpartitioned_products_with_eq_deletes"));
+    tableGenerator
+        .create(PRODUCTS_SCHEMA, PartitionSpec.unpartitioned(),
+            ImmutableMap.of(
+                // Iceberg will write at minimum 100 rows per rowgroup, so set row group size small
+                // enough to
+                // guarantee that happens
+                TableProperties.PARQUET_ROW_GROUP_SIZE_BYTES, Integer.toString(1)))
+        .append(this::generateUnpartitionedProductsRecord, 2, 200) // Append 200 unpartitioned products
+        .commit()
+        .equalityDelete(
+            r -> r.get(0, Integer.class) < 30,
+            equalityIds(PRODUCTS_SCHEMA, "product_id"))
+        .commit()
+        .append(this::generateUnpartitionedProductsRecord, 2, 200) // Append another 200 unpartitioned products
+        .commit()
+        .equalityDelete(
+            r -> r.get(3, String.class).equals("green"),
+            equalityIds(PRODUCTS_SCHEMA, "color"))
+        .commit()
+        .append(this::generateUnpartitionedProductsRecord, 2, 200) // Append another 200 unpartitioned products
+        .commit()
+        .equalityDelete(
+            r -> r.get(0, Integer.class) % 200 >= 100,
+            equalityIds(PRODUCTS_SCHEMA, "product_id"))
+        .commit()
+        // delete product_ids [ 50 .. 52 ] via positional delete - 3 rows removed
+        .positionalDelete(
+            r -> r.get(0, Integer.class) >= 50 && r.get(0, Integer.class) < 53)
+        .commit();
+  }
+
   private void createProductsWithEqDeletesSchemaChange() throws IOException {
     Schema initialSchema = PRODUCTS_SCHEMA.select("product_id", "name", "category");
     IcebergTableGenerator tableGenerator =
@@ -386,6 +422,19 @@ public class Main {
     record.set(3, 0);
     record.set(4, "");
     record.set(5, 0.0);
+    return record;
+  }
+
+  private GenericRecord generateUnpartitionedProductsRecord(ValueGenerator generator, Void unused) {
+    GenericRecord record = GenericRecord.create(PRODUCTS_SCHEMA);
+    int id = generator.id();
+    record.set(0, id);
+    record.set(1, generator.select(PRODUCT_NAMES) + " " + generator.intRange(0, 100));
+    record.set(2, generator.select(PRODUCT_NAMES) + " " + generator.intRange(0, 100));
+    record.set(3, COLORS.get(id % COLORS.size()));
+    record.set(4, LocalDate.of(2022 - (id / 12), 12 - (id % 12), 1));
+    record.set(5, generator.doubleRange(0.1, 50.0));
+    record.set(6, generator.intRange(0, 10000));
     return record;
   }
 
