@@ -10,6 +10,8 @@ import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.apache.hadoop.conf.Configuration;
@@ -71,6 +73,15 @@ public class Main {
                     "black", "white", "red", "orange", "yellow", "green", "blue", "purple", "brown",
                     "gray");
 
+    private static final int WIDE_METRICS_N_COLS = 1000;
+    private static final Schema WIDE_METRICS_SCHEMA = new Schema(
+        Stream
+            .iterate(0, i -> i + 1)
+            .limit(WIDE_METRICS_N_COLS)
+            .map(i -> i == 0 ? Types.NestedField.required(i + 1, "id", Types.IntegerType.get()) : Types.NestedField.required(i + 1, "metric_" + (i - 1), Types.DoubleType.get()))
+            .collect(Collectors.toList()));
+
+
     public static void main(String[] args) {
         try {
             Main main = new Main();
@@ -105,15 +116,17 @@ public class Main {
     }
 
     private void run() throws IOException {
-        createSmallOrders();
-        createSmallOrdersWithDeletes();
-        createMultiRowGroupOrdersWithDeletes();
-        createOrdersFullRowgroupDelete();
-        createOrdersWithLongPaths();
-        createUnpartitionedOrdersWithDeletes();
-        createProductsWithEqDeletes();
+        // createSmallOrders();
+        // createSmallOrdersWithDeletes();
+        // createMultiRowGroupOrdersWithDeletes();
+        // createOrdersFullRowgroupDelete();
+        // createOrdersWithLongPaths();
+        // createUnpartitionedOrdersWithDeletes();
+        // createProductsWithEqDeletes();
 
-        createLargeUnpartitionedOrdersWithDeletes();
+        // createLargeUnpartitionedOrdersWithDeletes();
+
+        createWideMetrics();
 
         //    createProductsWithEqDeletesSchemaChange();
         //    createSmallOrdersWithLargeDeleteFile();
@@ -447,6 +460,18 @@ public class Main {
         */
     }
 
+    private void createWideMetrics() throws IOException {
+        IcebergTableGenerator tableGenerator =
+            new IcebergTableGenerator(
+                warehousePath,
+                conf,
+                TableIdentifier.of("wide_metrics"));
+        tableGenerator
+            .create(WIDE_METRICS_SCHEMA, PartitionSpec.unpartitioned())
+            .append(this::generateWideMetricsRecord, 30, 1)
+            .commit();
+    }
+
     private GenericRecord generateOrdersRecord(ValueGenerator generator, Integer partitionValue) {
         GenericRecord record = GenericRecord.create(ORDERS_SCHEMA);
         record.set(0, generator.id());
@@ -566,5 +591,14 @@ public class Main {
         return Arrays.stream(fields)
                 .map(f -> schema.findField(f).fieldId())
                 .collect(Collectors.toList());
+    }
+
+    private GenericRecord generateWideMetricsRecord(ValueGenerator generator, Void unused) {
+        GenericRecord record = GenericRecord.create(WIDE_METRICS_SCHEMA);
+        record.set(0, generator.id());
+        for (int i = 1; i < WIDE_METRICS_N_COLS; i++) {
+            record.set(i, generator.doubleRange(0, 100));
+        }
+        return record;
     }
 }
